@@ -1,0 +1,13 @@
+{
+    "ecma": 8,
+    "module": true,
+    "compress": {
+        "unsafe": true
+    },
+    "output": {
+        "comments": false
+    },
+    "sourceMap": {
+        "root": "."
+    }
+}

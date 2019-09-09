@@ -1,0 +1,11 @@
+{
+    "extends": "@princjef/tslint-config",
+    "rules": {
+        "file-header": [
+            true,
+            "^!\\s*\\* Copyright \\(c\\) Microsoft Corporation\\.\r?\n \\* Licensed under the MIT License\\.\\s*$",
+            "Copyright (c) Microsoft Corporation.\nLicensed under the MIT License."
+        ],
+        "no-namespace": true
+    }
+}

@@ -1,0 +1,68 @@
+{
+  "name": "redis-bucket",
+  "version": "1.0.0",
+  "description": "A Redis-backed leaky-bucket rate limiter",
+  "keywords": [
+    "redis",
+    "leaky-bucket",
+    "rate",
+    "limit",
+    "capacity"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/plsmphnx/redis-bucket.git"
+  },
+  "author": "Microsoft",
+  "license": "MIT",
+  "main": "index.js",
+  "typings": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts"
+  ],
+  "devDependencies": {
+    "@prettier/plugin-lua": "^0.0.1",
+    "@princjef/tslint-config": "^2.0.0",
+    "@types/jest": "^24.0.23",
+    "@types/redis": "^2.8.14",
+    "codecov": "^3.6.1",
+    "fakeredis": "^2.0.0",
+    "jest": "^24.9.0",
+    "luamin": "^1.0.4",
+    "prettier": "^1.19.1",
+    "pubcop": "^1.0.1",
+    "redis-eval-mock": "^1.0.0",
+    "terser": "^4.4.2",
+    "tslint": "^5.20.1",
+    "typescript": "^3.7.3"
+  },
+  "scripts": {
+    "lint": "tslint --project tsconfig.json --fix",
+    "lint:verify": "tslint --project tsconfig.json",
+    "format": "prettier --write *",
+    "format:verify": "prettier --check *",
+    "prebuild": "npm run lint && npm run format",
+    "prebuild:verify": "npm run lint:verify && npm run format:verify",
+    "build": "tsc && node embed",
+    "build:verify": "tsc && node embed minify && npm run minify",
+    "pretest": "npm run build",
+    "pretest:verify": "npm run build:verify",
+    "test": "jest index.spec.js",
+    "test:verify": "jest index.spec.js",
+    "minify": "terser index.js -o index.js --config-file terser.json",
+    "prepublishOnly": "npm run test:verify && pubcop --checks tag branch",
+    "coverage": "codecov"
+  },
+  "jest": {
+    "collectCoverage": true,
+    "coverageThreshold": {
+      "global": {
+        "branches": 100,
+        "functions": 100,
+        "lines": 100,
+        "statements": 100
+      }
+    }
+  }
+}

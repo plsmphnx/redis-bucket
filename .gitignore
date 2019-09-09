@@ -1,0 +1,12 @@
+# Modules
+node_modules/
+
+# Built files
+coverage/
+.*/
+*.map
+*.tgz
+*.log
+*.js
+*.d.ts
+!embed.js

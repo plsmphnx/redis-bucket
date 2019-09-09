@@ -1,0 +1,18 @@
+# Ignore everything by default
+*
+
+# Enable for top-level files and our source code
+!/*
+
+# Ignore built files
+/index*.js*
+/index*.d.ts*
+
+# Ignore files that don't currently have formatters
+.*
+license
+
+# Ignore the npm files because it will format
+# them regardless of what we choose to do
+package.json
+package-lock.json
