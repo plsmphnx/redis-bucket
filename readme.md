@@ -1,5 +1,9 @@
 # redis-bucket
 
+[![Travis CI build status](https://travis-ci.org/plsmphnx/redis-bucket.svg?branch=master)](https://travis-ci.org/plsmphnx/redis-bucket)
+[![codecov](https://codecov.io/gh/plsmphnx/redis-bucket/branch/master/graph/badge.svg)](https://codecov.io/gh/plsmphnx/redis-bucket)
+[![npm version](https://img.shields.io/npm/v/redis-bucket.svg)](https://npmjs.org/package/redis-bucket)
+
 A Redis-backed rate limiter, based on the
 [leaky-bucket algorithm](https://en.wikipedia.org/wiki/Leaky_bucket#As_a_meter).
 Implemented using a purely EVAL-based solution, which provides the following
