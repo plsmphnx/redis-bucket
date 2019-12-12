@@ -16,5 +16,5 @@ stages:
 jobs:
   include:
     - stage: test
-      script: npm run test:verify
+      script: npm run test
       after_success: npm run coverage

@@ -48,8 +48,8 @@
     "build:verify": "tsc && node embed minify && npm run minify",
     "pretest": "npm run build",
     "pretest:verify": "npm run build:verify",
-    "test": "jest index.spec.js",
-    "test:verify": "jest index.spec.js",
+    "test": "jest",
+    "test:verify": "jest",
     "minify": "terser index.js -o index.js --config-file terser.json",
     "prepublishOnly": "npm run test:verify && pubcop --checks tag branch",
     "coverage": "codecov"
@@ -63,6 +63,7 @@
         "lines": 100,
         "statements": 100
       }
-    }
+    },
+    "testMatch": ["**/*.spec.js"]
   }
 }
