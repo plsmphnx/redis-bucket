@@ -11,6 +11,8 @@
 # Ignore files that don't currently have formatters
 .*
 license
+*.lua
+*.tgz
 
 # Ignore the npm files because it will format
 # them regardless of what we choose to do

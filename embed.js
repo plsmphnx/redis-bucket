@@ -17,9 +17,7 @@ const code =
         : readFileSync('bucket.lua', 'utf8');
 
 // Generate SHA1 hash of Lua script for evalsha
-const hash = createHash('sha1')
-    .update(code, 'utf8')
-    .digest('hex');
+const hash = createHash('sha1').update(code, 'utf8').digest('hex');
 
 // Replace placeholder strings in source
 const body = file

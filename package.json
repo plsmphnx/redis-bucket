@@ -22,20 +22,19 @@
     "index.d.ts"
   ],
   "devDependencies": {
-    "@prettier/plugin-lua": "^0.0.1",
-    "@princjef/tslint-config": "^2.0.0",
-    "@types/jest": "^24.0.23",
-    "@types/redis": "^2.8.14",
-    "codecov": "^3.6.1",
+    "@princjef/tslint-config": "^2.0.1",
+    "@types/jest": "^27.0.3",
+    "@types/redis": "^2.8.32",
+    "codecov": "^3.8.3",
     "fakeredis": "^2.0.0",
-    "jest": "^24.9.0",
+    "jest": "^27.4.3",
     "luamin": "^1.0.4",
-    "prettier": "^1.19.1",
-    "pubcop": "^1.0.1",
-    "redis-eval-mock": "^1.0.0",
-    "terser": "^4.4.2",
+    "prettier": "^2.5.0",
+    "pubcop": "^1.0.2",
+    "redis-eval-mock": "^1.0.1",
+    "terser": "^5.10.0",
     "tslint": "^5.20.1",
-    "typescript": "^3.7.3"
+    "typescript": "^4.5.2"
   },
   "scripts": {
     "lint": "tslint --project tsconfig.json --fix",
@@ -64,6 +63,8 @@
         "statements": 100
       }
     },
-    "testMatch": ["**/*.spec.js"]
+    "testMatch": [
+      "**/*.spec.js"
+    ]
   }
 }

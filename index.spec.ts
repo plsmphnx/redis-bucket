@@ -46,8 +46,8 @@ describe('redis-bucket', () => {
             redis.createClient({ fast: true } as redis.ClientOpts)
         );
         seconds = 1;
-        spyOn(Date, 'now').and.callFake(() => seconds * 1000);
-        spyOn(Math, 'random').and.returnValue(0);
+        jest.spyOn(Date, 'now').mockImplementation(() => seconds * 1000);
+        jest.spyOn(Math, 'random').mockReturnValue(0);
     });
 
     it('performs basic validation', () => {
@@ -198,7 +198,7 @@ describe('redis-bucket', () => {
     });
 
     it('discards superfluous rates', async () => {
-        const evalSpy = spyOn(client, 'evalsha').and.callThrough();
+        const evalSpy = jest.spyOn(client, 'evalsha');
 
         const rate: Limiter.Rate[] = [
             { burst: 4, flow: 0.1 }, // 1 - Valid
@@ -221,7 +221,7 @@ describe('redis-bucket', () => {
 
     it('passes errors through', async () => {
         const error = Error();
-        spyOn(client, 'evalsha').and.callFake((...args: any[]) =>
+        jest.spyOn(client, 'evalsha').mockImplementation((...args: any[]) =>
             args.pop()(error)
         );
 
