@@ -19,6 +19,40 @@ advantages:
 -   _Development_ - Node.JS 8.x or higher.
 -   _Runtime_ - A Redis client supporting callback-style `eval` and `evalsha`.
 
+## Example
+
+```ts
+import * as express from 'express';
+import * as redis from 'redis';
+import * as limiter from 'redis-bucket';
+
+// Create a Redis client with appropriate configuration and error handling
+const client = redis.createClient({});
+client.on('error', () => {});
+
+// Create a limiter that restricts calls to 10-20 per minute
+const limit = limiter.create({
+    client,
+    capacity: { window: 60, min: 10, max: 20 },
+});
+
+// Simple server, expects a "user" query parameter to identify callers
+const app = express();
+app.get('/', async (req, res) => {
+    // Scope rate-limiting to a given user
+    const result = await limit(req.query.user);
+    if (result.allow) {
+        // Accept this call
+        res.sendStatus(200);
+    } else {
+        // Reject this call with "Too Many Requests"
+        res.set('Retry-After', result.wait);
+        res.sendStatus(429);
+    }
+});
+app.listen(8080);
+```
+
 ## API
 
 ### create(config)
