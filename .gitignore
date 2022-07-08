@@ -7,6 +7,10 @@ coverage/
 *.map
 *.tgz
 *.log
+*.rdb
 *.js
 *.d.ts
+
+# Config files
+!.github/
 !embed.js

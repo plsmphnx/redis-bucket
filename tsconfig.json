@@ -11,10 +11,7 @@
         "suppressImplicitAnyIndexErrors": true,
         "forceConsistentCasingInFileNames": true,
         "newLine": "lf",
-        "baseUrl": ".",
-        "paths": {
-            "fakeredis": ["node_modules/@types/redis"]
-        }
+        "baseUrl": "."
     },
     "include": ["index.ts", "index.spec.ts"]
 }

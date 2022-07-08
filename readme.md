@@ -1,10 +1,10 @@
 # redis-bucket
 
-[![Travis CI build status](https://travis-ci.org/plsmphnx/redis-bucket.svg?branch=master)](https://travis-ci.org/plsmphnx/redis-bucket)
+[![build status](https://github.com/plsmphnx/redis-bucket/workflows/build/badge.svg)](https://github.com/plsmphnx/redis-bucket/actions?query=workflow%3Abuild+branch%3Amaster)
 [![codecov](https://codecov.io/gh/plsmphnx/redis-bucket/branch/master/graph/badge.svg)](https://codecov.io/gh/plsmphnx/redis-bucket)
 [![npm version](https://img.shields.io/npm/v/redis-bucket.svg)](https://npmjs.org/package/redis-bucket)
 
-A Redis-backed rate limiter, based on the
+A [Redis](https://redis.io/)-backed rate limiter, based on the
 [leaky-bucket algorithm](https://en.wikipedia.org/wiki/Leaky_bucket#As_a_meter).
 Implemented using a purely EVAL-based solution, which provides the following
 advantages:
@@ -16,7 +16,8 @@ advantages:
 
 ## Requirements
 
--   _Development_ - Node.JS 8.x or higher.
+-   _Development_ - [Node.js](https://nodejs.org/) and a running Redis instance
+    for testing.
 -   _Runtime_ - A Redis client supporting callback-style `eval` and `evalsha`.
 
 ## Example

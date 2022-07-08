@@ -23,18 +23,15 @@
   ],
   "devDependencies": {
     "@princjef/tslint-config": "^2.0.1",
-    "@types/jest": "^27.0.3",
-    "@types/redis": "^2.8.32",
-    "codecov": "^3.8.3",
-    "fakeredis": "^2.0.0",
-    "jest": "^27.4.3",
+    "@types/jest": "^28.1.4",
+    "jest": "^28.1.2",
     "luamin": "^1.0.4",
-    "prettier": "^2.5.0",
+    "prettier": "^2.7.1",
     "pubcop": "^1.0.2",
-    "redis-eval-mock": "^1.0.1",
-    "terser": "^5.10.0",
+    "redis": "^4.2.0",
+    "terser": "^5.14.1",
     "tslint": "^5.20.1",
-    "typescript": "^4.5.2"
+    "typescript": "^4.7.4"
   },
   "scripts": {
     "lint": "tslint --project tsconfig.json --fix",
@@ -50,8 +47,7 @@
     "test": "jest",
     "test:verify": "jest",
     "minify": "terser index.js -o index.js --config-file terser.json",
-    "prepublishOnly": "npm run test:verify && pubcop --checks tag branch",
-    "coverage": "codecov"
+    "prepublishOnly": "npm run test:verify && pubcop --checks tag branch"
   },
   "jest": {
     "collectCoverage": true,

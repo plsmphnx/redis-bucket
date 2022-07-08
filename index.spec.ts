@@ -3,8 +3,7 @@
  * Licensed under the MIT License.
  */
 
-import * as redis from 'fakeredis';
-import mockEval from 'redis-eval-mock';
+import * as redis from 'redis';
 
 import * as Limiter from './index';
 
@@ -37,20 +36,84 @@ function repeat(times: number) {
     return Array.from(Array(times).keys());
 }
 
-describe('redis-bucket', () => {
-    let seconds: number;
-    let client: redis.RedisClient;
+// Run a test against a live Redis instance
+function test(
+    desc: string,
+    cb: (
+        client: Limiter.Client,
+        key: string,
+        now: () => number,
+        sleep: (s: number) => Promise<void>
+    ) => Promise<void>
+) {
+    it(desc, async () => {
+        // Generate unique keys based on the test description
+        const id = desc.replace(/ /g, '-');
+        const key = `redis-bucket-test:${id}`;
+        const time = `redis-bucket-test:time:${id}`;
 
-    beforeEach(() => {
-        client = mockEval(
-            redis.createClient({ fast: true } as redis.ClientOpts)
-        );
-        seconds = 1;
-        jest.spyOn(Date, 'now').mockImplementation(() => seconds * 1000);
-        jest.spyOn(Math, 'random').mockReturnValue(0);
+        // Connect to Redis using the default values
+        const raw = redis.createClient();
+        await raw.connect();
+
+        // Translate the Limiter.Client format to the Redis client format
+        const client: Limiter.Client = {
+            async eval(script: string, keys: number, ...args: any[]) {
+                const cb = args.pop();
+                try {
+                    const res = await raw.eval(
+                        // Patch the script, using a list to perform a
+                        // controlled mock of the time function
+                        script.replace(`'time'`, `'lrange','${time}',0,1`),
+                        {
+                            keys: args.slice(0, keys),
+                            arguments: args.slice(keys).map(String),
+                        }
+                    );
+                    cb(null, res);
+                } catch (e) {
+                    cb(e, null);
+                }
+            },
+            async evalsha(hash: string, keys: number, ...args: any[]) {
+                const cb = args.pop();
+                try {
+                    // This will always fail since the sha1 hash will not match
+                    // the patched script, but it validates the fallback path
+                    const res = await raw.evalSha(hash, {
+                        keys: args.slice(0, keys),
+                        arguments: args.slice(keys).map(String),
+                    });
+                    cb(null, res);
+                } catch (e) {
+                    cb(e, null);
+                }
+            },
+        };
+
+        // Methods to utilize the controlled time mock
+        let seconds = 1;
+        await raw.lPush(time, ['0', '1']);
+        const now = () => seconds;
+        const sleep = async (s: number) => {
+            seconds += s;
+            await raw.lPush(time, [
+                String(Math.floor((seconds % 1) * 1e6)), // Microseconds
+                String(Math.floor(seconds)), // Full seconds
+            ]);
+        };
+
+        // Execute the test
+        await cb(client, key, now, sleep);
+
+        // Clean up any keys the test may have generated
+        await raw.del([key, time]);
+        await raw.quit();
     });
+}
 
-    it('performs basic validation', () => {
+describe('redis-bucket', () => {
+    test('performs basic validation', async client => {
         expect(() => Limiter.create({ client })).toThrow(RangeError);
         expect(() =>
             Limiter.create({
@@ -69,19 +132,19 @@ describe('redis-bucket', () => {
         ).toThrow(RangeError);
     });
 
-    it('handles basic capacity metrics', async () => {
+    test('handles basic capacity metrics', async (client, key, now, sleep) => {
         const capacity: Limiter.Capacity = { window: 60, min: 10, max: 20 };
         const limit = Limiter.create({ client, capacity });
 
         // Perform test twice, for burst and steady-state near capacity
         for (const {} of repeat(2)) {
-            const base = seconds;
+            const base = now();
             let allowed = 0;
 
             // Expend capacity for the duration of the window
-            while (seconds < base + capacity.window) {
-                allowed += +(await limit('capacity')).allow;
-                seconds += 1;
+            while (now() < base + capacity.window) {
+                allowed += +(await limit(key)).allow;
+                await sleep(1);
             }
 
             // Capacity should be within the bounds
@@ -90,41 +153,41 @@ describe('redis-bucket', () => {
         }
     });
 
-    it('handles basic rate metrics', async () => {
+    test('handles basic rate metrics', async (client, key, now, sleep) => {
         const rate: Limiter.Rate = { burst: 9, flow: 1 / 2 };
         const limit = Limiter.create({ client, rate });
 
         // Perform test twice to ensure full drain
         for (const {} of repeat(2)) {
-            const base = seconds;
+            const base = now();
             let free = rate.burst - 1;
 
             // Expect initial burst to be allowed
             const time = calcTime(rate, true);
-            while (seconds < base + time) {
-                expect(await limit('rate')).toEqual({ allow: true, free });
-                seconds += 1;
+            while (now() < base + time) {
+                expect(await limit(key)).toEqual({ allow: true, free });
+                await sleep(1);
                 free += rate.flow - 1;
             }
 
             // Expect steady-state of flow rate near capacity
             const loop = calcLoop(rate);
-            while (seconds < base + time + loop * 4) {
+            while (now() < base + time + loop * 4) {
                 let allowed = 0;
                 for (const {} of repeat(loop)) {
-                    allowed += +(await limit('rate')).allow;
-                    seconds += 1;
+                    allowed += +(await limit(key)).allow;
+                    await sleep(1);
                 }
                 expect(allowed).toBe(1);
             }
 
             // Once the flow would return the full burst capacity,
             // behavior should be reset to baseline
-            seconds += rate.burst / rate.flow;
+            await sleep(rate.burst / rate.flow);
         }
     });
 
-    it('handles multiple rates', async () => {
+    test('handles multiple rates', async (client, key, now, sleep) => {
         const slow: Limiter.Rate = { burst: 18, flow: 1 / 4 };
         const fast: Limiter.Rate = { burst: 9, flow: 1 / 2 };
         const scaling = Limiter.SCALING.exponential;
@@ -133,14 +196,14 @@ describe('redis-bucket', () => {
             rate: [slow, fast],
             scaling,
         });
-        const base = seconds;
+        const base = now();
         let free = fast.burst - 1;
 
         // Expect initial burst to be allowed
         const timeFast = calcTime(fast, true);
-        while (seconds < base + timeFast) {
-            expect(await limit('multiple')).toEqual({ allow: true, free });
-            seconds += 1;
+        while (now() < base + timeFast) {
+            expect(await limit(key)).toEqual({ allow: true, free });
+            await sleep(1);
             free += fast.flow - 1;
         }
 
@@ -151,11 +214,11 @@ describe('redis-bucket', () => {
                 burst: calcLeft(slow, timeFast, true),
                 flow: slow.flow / fast.flow,
             }) * loopFast;
-        while (seconds < base + timeFast + timeSlow) {
+        while (now() < base + timeFast + timeSlow) {
             let allowed = 0;
             for (const {} of repeat(loopFast)) {
-                allowed += +(await limit('multiple')).allow;
-                seconds += 1;
+                allowed += +(await limit(key)).allow;
+                await sleep(1);
             }
             expect(allowed).toBe(1);
         }
@@ -163,33 +226,33 @@ describe('redis-bucket', () => {
         // Expect slow flow rate afterwards
         const loopSlow = calcLoop(slow);
         let wait: number | undefined;
-        while (seconds < base + timeFast + timeSlow + loopSlow * 4) {
+        while (now() < base + timeFast + timeSlow + loopSlow * 4) {
             let allowed = 0;
             for (const {} of repeat(loopSlow)) {
-                const result = await limit('multiple');
+                const result = await limit(key);
                 if (result.allow) {
                     allowed += 1;
                 } else if (wait) {
                     expect(result.wait).toBe(2 * wait);
                 }
                 wait = (result as any).wait;
-                seconds += 1;
+                await sleep(1);
             }
             expect(allowed).toBe(1);
         }
     });
 
-    it('handles subsecond deltas', async () => {
+    test('handles subsecond deltas', async (client, key, now, sleep) => {
         const capacity: Limiter.Capacity = { window: 1, min: 4, max: 5 };
         const limit = Limiter.create({ client, capacity });
 
-        const base = seconds;
+        const base = now();
         let allowed = 0;
 
         // Expend capacity for the duration of the window
-        while (seconds < base + capacity.window) {
-            allowed += +(await limit('subsecond')).allow;
-            seconds += 0.125;
+        while (now() < base + capacity.window) {
+            allowed += +(await limit(key)).allow;
+            await sleep(0.125);
         }
 
         // Capacity should be within the bounds
@@ -197,7 +260,7 @@ describe('redis-bucket', () => {
         expect(allowed).toBeLessThanOrEqual(capacity.max);
     });
 
-    it('discards superfluous rates', async () => {
+    test('discards superfluous rates', async (client, key) => {
         const evalSpy = jest.spyOn(client, 'evalsha');
 
         const rate: Limiter.Rate[] = [
@@ -207,19 +270,19 @@ describe('redis-bucket', () => {
             { burst: 2, flow: 0.3 }, // 4 - Strictly larger than 3
             { burst: 1, flow: 0.4 }, // 5 - Valid
         ];
-        await Limiter.create({ client, rate })('extra');
+        await Limiter.create({ client, rate })(key);
 
         expect(evalSpy).toHaveBeenCalledWith(
             expect.any(String),
             1,
-            'extra',
+            key,
             1,
             ...[0.1, 4, 0.2, 2, 0.4, 1],
             expect.any(Function)
         );
     });
 
-    it('passes errors through', async () => {
+    test('passes errors through', async (client, key) => {
         const error = Error();
         jest.spyOn(client, 'evalsha').mockImplementation((...args: any[]) =>
             args.pop()(error)
@@ -227,14 +290,14 @@ describe('redis-bucket', () => {
 
         try {
             const rate: Limiter.Rate = { burst: 4, flow: 0.1 };
-            await Limiter.create({ client, rate })('error');
+            await Limiter.create({ client, rate })(key);
             fail('should throw underlying error');
         } catch (err) {
             expect(err).toBe(error);
         }
     });
 
-    it('performs the expected scaling', async () => {
+    test('performs the expected scaling', async () => {
         const factor = 2;
         const denied = 3;
         const expected = {
