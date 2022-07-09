@@ -25,7 +25,6 @@
     "@princjef/tslint-config": "^2.0.1",
     "@types/jest": "^28.1.4",
     "jest": "^28.1.2",
-    "luamin": "^1.0.4",
     "prettier": "^2.7.1",
     "pubcop": "^1.0.2",
     "redis": "^4.2.0",

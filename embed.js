@@ -3,21 +3,17 @@
  * Licensed under the MIT License.
  */
 
-const { createHash } = require('crypto');
 const { readFileSync, writeFileSync } = require('fs');
-const { minify } = require('luamin');
 
-// Read built source
-const file = readFileSync('index.js', 'utf8');
-
-// Read minified Lua script
-const code =
+const script =
     process.argv[2] === 'minify'
-        ? minify(readFileSync('bucket.lua', 'utf8'))
-        : readFileSync('bucket.lua', 'utf8');
+        ? 'script/bucket.min.lua'
+        : 'script/bucket.lua';
 
-// Generate SHA1 hash of Lua script for evalsha
-const hash = createHash('sha1').update(code, 'utf8').digest('hex');
+// Read built sources
+const file = readFileSync('index.js', 'utf8');
+const code = readFileSync(script, 'utf8');
+const hash = readFileSync(script + '.sha1', 'utf8');
 
 // Replace placeholder strings in source
 const body = file
