@@ -23,12 +23,13 @@
   ],
   "devDependencies": {
     "@princjef/tslint-config": "^2.0.1",
-    "@types/jest": "^28.1.4",
-    "jest": "^28.1.2",
+    "@types/node": "^18.0.4",
+    "ava": "^4.3.1",
+    "c8": "^7.11.3",
     "prettier": "^2.7.1",
     "pubcop": "^1.0.2",
     "redis": "^4.2.0",
-    "terser": "^5.14.1",
+    "terser": "^5.14.2",
     "tslint": "^5.20.1",
     "typescript": "^4.7.4"
   },
@@ -43,23 +44,13 @@
     "build:verify": "tsc && node embed minify && npm run minify",
     "pretest": "npm run build",
     "pretest:verify": "npm run build:verify",
-    "test": "jest",
-    "test:verify": "jest",
+    "test": "c8 ava",
+    "test:verify": "c8 ava",
     "minify": "terser index.js -o index.js --config-file terser.json",
     "prepublishOnly": "npm run test:verify && pubcop --checks tag branch"
   },
-  "jest": {
-    "collectCoverage": true,
-    "coverageThreshold": {
-      "global": {
-        "branches": 100,
-        "functions": 100,
-        "lines": 100,
-        "statements": 100
-      }
-    },
-    "testMatch": [
-      "**/*.spec.js"
-    ]
+  "c8": {
+    "100": true,
+    "exclude": ["*.spec.*"]
   }
 }

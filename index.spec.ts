@@ -3,6 +3,7 @@
  * Licensed under the MIT License.
  */
 
+import test, { ExecutionContext } from 'ava';
 import * as redis from 'redis';
 
 import * as Limiter from './index';
@@ -37,19 +38,20 @@ function repeat(times: number) {
 }
 
 // Run a test against a live Redis instance
-function test(
+function it(
     desc: string,
     cb: (
+        t: ExecutionContext,
         client: Limiter.Client,
         key: string,
         now: () => number,
         sleep: (s: number) => Promise<void>
     ) => Promise<void>
 ) {
-    it(desc, async () => {
+    test(desc, async t => {
         // Generate unique keys based on the test description
         const id = desc.replace(/ /g, '-');
-        const key = `redis-bucket-test:${id}`;
+        const key = `redis-bucket-test:key:${id}`;
         const time = `redis-bucket-test:time:${id}`;
 
         // Connect to Redis using the default values
@@ -104,7 +106,7 @@ function test(
         };
 
         // Execute the test
-        await cb(client, key, now, sleep);
+        await cb(t, client, key, now, sleep);
 
         // Clean up any keys the test may have generated
         await raw.del([key, time]);
@@ -112,202 +114,204 @@ function test(
     });
 }
 
-describe('redis-bucket', () => {
-    test('performs basic validation', async client => {
-        expect(() => Limiter.create({ client })).toThrow(RangeError);
-        expect(() =>
+it('performs basic validation', async (t, client) => {
+    t.throws(() => Limiter.create({ client }), { instanceOf: RangeError });
+    t.throws(
+        () =>
             Limiter.create({
                 client,
                 capacity: { window: -60, min: 10, max: 20 },
-            })
-        ).toThrow(RangeError);
-        expect(() =>
+            }),
+        { instanceOf: RangeError }
+    );
+    t.throws(
+        () =>
             Limiter.create({
                 client,
                 capacity: { window: 60, min: 10, max: 10 },
-            })
-        ).toThrow(RangeError);
-        expect(() =>
-            Limiter.create({ client, rate: { flow: 1, burst: 0 } })
-        ).toThrow(RangeError);
+            }),
+        { instanceOf: RangeError }
+    );
+    t.throws(() => Limiter.create({ client, rate: { flow: 1, burst: 0 } }), {
+        instanceOf: RangeError,
     });
+});
 
-    test('handles basic capacity metrics', async (client, key, now, sleep) => {
-        const capacity: Limiter.Capacity = { window: 60, min: 10, max: 20 };
-        const limit = Limiter.create({ client, capacity });
+it('handles basic capacity metrics', async (t, client, key, now, sleep) => {
+    const capacity: Limiter.Capacity = { window: 60, min: 10, max: 20 };
+    const limit = Limiter.create({ client, capacity });
 
-        // Perform test twice, for burst and steady-state near capacity
-        for (const {} of repeat(2)) {
-            const base = now();
-            let allowed = 0;
-
-            // Expend capacity for the duration of the window
-            while (now() < base + capacity.window) {
-                allowed += +(await limit(key)).allow;
-                await sleep(1);
-            }
-
-            // Capacity should be within the bounds
-            expect(allowed).toBeGreaterThanOrEqual(capacity.min);
-            expect(allowed).toBeLessThanOrEqual(capacity.max);
-        }
-    });
-
-    test('handles basic rate metrics', async (client, key, now, sleep) => {
-        const rate: Limiter.Rate = { burst: 9, flow: 1 / 2 };
-        const limit = Limiter.create({ client, rate });
-
-        // Perform test twice to ensure full drain
-        for (const {} of repeat(2)) {
-            const base = now();
-            let free = rate.burst - 1;
-
-            // Expect initial burst to be allowed
-            const time = calcTime(rate, true);
-            while (now() < base + time) {
-                expect(await limit(key)).toEqual({ allow: true, free });
-                await sleep(1);
-                free += rate.flow - 1;
-            }
-
-            // Expect steady-state of flow rate near capacity
-            const loop = calcLoop(rate);
-            while (now() < base + time + loop * 4) {
-                let allowed = 0;
-                for (const {} of repeat(loop)) {
-                    allowed += +(await limit(key)).allow;
-                    await sleep(1);
-                }
-                expect(allowed).toBe(1);
-            }
-
-            // Once the flow would return the full burst capacity,
-            // behavior should be reset to baseline
-            await sleep(rate.burst / rate.flow);
-        }
-    });
-
-    test('handles multiple rates', async (client, key, now, sleep) => {
-        const slow: Limiter.Rate = { burst: 18, flow: 1 / 4 };
-        const fast: Limiter.Rate = { burst: 9, flow: 1 / 2 };
-        const scaling = Limiter.SCALING.exponential;
-        const limit = Limiter.create({
-            client: () => Promise.resolve(client),
-            rate: [slow, fast],
-            scaling,
-        });
-        const base = now();
-        let free = fast.burst - 1;
-
-        // Expect initial burst to be allowed
-        const timeFast = calcTime(fast, true);
-        while (now() < base + timeFast) {
-            expect(await limit(key)).toEqual({ allow: true, free });
-            await sleep(1);
-            free += fast.flow - 1;
-        }
-
-        // Expect fast flow rate until slow burst is consumed
-        const loopFast = calcLoop(fast);
-        const timeSlow =
-            calcTime({
-                burst: calcLeft(slow, timeFast, true),
-                flow: slow.flow / fast.flow,
-            }) * loopFast;
-        while (now() < base + timeFast + timeSlow) {
-            let allowed = 0;
-            for (const {} of repeat(loopFast)) {
-                allowed += +(await limit(key)).allow;
-                await sleep(1);
-            }
-            expect(allowed).toBe(1);
-        }
-
-        // Expect slow flow rate afterwards
-        const loopSlow = calcLoop(slow);
-        let wait: number | undefined;
-        while (now() < base + timeFast + timeSlow + loopSlow * 4) {
-            let allowed = 0;
-            for (const {} of repeat(loopSlow)) {
-                const result = await limit(key);
-                if (result.allow) {
-                    allowed += 1;
-                } else if (wait) {
-                    expect(result.wait).toBe(2 * wait);
-                }
-                wait = (result as any).wait;
-                await sleep(1);
-            }
-            expect(allowed).toBe(1);
-        }
-    });
-
-    test('handles subsecond deltas', async (client, key, now, sleep) => {
-        const capacity: Limiter.Capacity = { window: 1, min: 4, max: 5 };
-        const limit = Limiter.create({ client, capacity });
-
+    // Perform test twice, for burst and steady-state near capacity
+    for (const {} of repeat(2)) {
         const base = now();
         let allowed = 0;
 
         // Expend capacity for the duration of the window
         while (now() < base + capacity.window) {
             allowed += +(await limit(key)).allow;
-            await sleep(0.125);
+            await sleep(1);
         }
 
         // Capacity should be within the bounds
-        expect(allowed).toBeGreaterThanOrEqual(capacity.min);
-        expect(allowed).toBeLessThanOrEqual(capacity.max);
+        t.assert(allowed >= capacity.min);
+        t.assert(allowed <= capacity.max);
+    }
+});
+
+it('handles basic rate metrics', async (t, client, key, now, sleep) => {
+    const rate: Limiter.Rate = { burst: 9, flow: 1 / 2 };
+    const limit = Limiter.create({ client, rate });
+
+    // Perform test twice to ensure full drain
+    for (const {} of repeat(2)) {
+        const base = now();
+        let free = rate.burst - 1;
+
+        // Expect initial burst to be allowed
+        const time = calcTime(rate, true);
+        while (now() < base + time) {
+            t.deepEqual(await limit(key), { allow: true, free });
+            await sleep(1);
+            free += rate.flow - 1;
+        }
+
+        // Expect steady-state of flow rate near capacity
+        const loop = calcLoop(rate);
+        while (now() < base + time + loop * 4) {
+            let allowed = 0;
+            for (const {} of repeat(loop)) {
+                allowed += +(await limit(key)).allow;
+                await sleep(1);
+            }
+            t.is(allowed, 1);
+        }
+
+        // Once the flow would return the full burst capacity,
+        // behavior should be reset to baseline
+        await sleep(rate.burst / rate.flow);
+    }
+});
+
+it('handles multiple rates', async (t, client, key, now, sleep) => {
+    const slow: Limiter.Rate = { burst: 18, flow: 1 / 4 };
+    const fast: Limiter.Rate = { burst: 9, flow: 1 / 2 };
+    const scaling = Limiter.SCALING.exponential;
+    const limit = Limiter.create({
+        client: () => Promise.resolve(client),
+        rate: [slow, fast],
+        scaling,
     });
+    const base = now();
+    let free = fast.burst - 1;
 
-    test('discards superfluous rates', async (client, key) => {
-        const evalSpy = jest.spyOn(client, 'evalsha');
+    // Expect initial burst to be allowed
+    const timeFast = calcTime(fast, true);
+    while (now() < base + timeFast) {
+        t.deepEqual(await limit(key), { allow: true, free });
+        await sleep(1);
+        free += fast.flow - 1;
+    }
 
-        const rate: Limiter.Rate[] = [
-            { burst: 4, flow: 0.1 }, // 1 - Valid
-            { burst: 3, flow: 0.2 }, // 2 - Strictly larger than 3
-            { burst: 2, flow: 0.2 }, // 3 - Valid
-            { burst: 2, flow: 0.3 }, // 4 - Strictly larger than 3
-            { burst: 1, flow: 0.4 }, // 5 - Valid
-        ];
+    // Expect fast flow rate until slow burst is consumed
+    const loopFast = calcLoop(fast);
+    const timeSlow =
+        calcTime({
+            burst: calcLeft(slow, timeFast, true),
+            flow: slow.flow / fast.flow,
+        }) * loopFast;
+    while (now() < base + timeFast + timeSlow) {
+        let allowed = 0;
+        for (const {} of repeat(loopFast)) {
+            allowed += +(await limit(key)).allow;
+            await sleep(1);
+        }
+        t.is(allowed, 1);
+    }
+
+    // Expect slow flow rate afterwards
+    const loopSlow = calcLoop(slow);
+    let wait: number | undefined;
+    while (now() < base + timeFast + timeSlow + loopSlow * 4) {
+        let allowed = 0;
+        for (const {} of repeat(loopSlow)) {
+            const result = await limit(key);
+            if (result.allow) {
+                allowed += 1;
+            } else if (wait) {
+                t.is(result.wait, 2 * wait);
+            }
+            wait = (result as any).wait;
+            await sleep(1);
+        }
+        t.is(allowed, 1);
+    }
+});
+
+it('handles subsecond deltas', async (t, client, key, now, sleep) => {
+    const capacity: Limiter.Capacity = { window: 1, min: 4, max: 5 };
+    const limit = Limiter.create({ client, capacity });
+
+    const base = now();
+    let allowed = 0;
+
+    // Expend capacity for the duration of the window
+    while (now() < base + capacity.window) {
+        allowed += +(await limit(key)).allow;
+        await sleep(0.125);
+    }
+
+    // Capacity should be within the bounds
+    t.assert(allowed >= capacity.min);
+    t.assert(allowed <= capacity.max);
+});
+
+it('discards superfluous rates', async (t, _, key) => {
+    const client: Limiter.Client = {
+        eval() {},
+        evalsha(...args: any[]) {
+            t.deepEqual(args.slice(1, -1), [1, key, 1, 0.1, 4, 0.2, 2, 0.4, 1]);
+            args.pop()(null, [1, 1, 1]);
+        },
+    };
+
+    const rate: Limiter.Rate[] = [
+        { burst: 4, flow: 0.1 }, // 1 - Valid
+        { burst: 3, flow: 0.2 }, // 2 - Strictly larger than 3
+        { burst: 2, flow: 0.2 }, // 3 - Valid
+        { burst: 2, flow: 0.3 }, // 4 - Strictly larger than 3
+        { burst: 1, flow: 0.4 }, // 5 - Valid
+    ];
+    await Limiter.create({ client, rate })(key);
+});
+
+it('passes errors through', async (t, _, key) => {
+    const error = Error();
+    const client: Limiter.Client = {
+        eval() {},
+        evalsha(...args: any[]) {
+            args.pop()(error, null);
+        },
+    };
+
+    try {
+        const rate: Limiter.Rate = { burst: 4, flow: 0.1 };
         await Limiter.create({ client, rate })(key);
+        t.fail('should throw underlying error');
+    } catch (err) {
+        t.is(err, error);
+    }
+});
 
-        expect(evalSpy).toHaveBeenCalledWith(
-            expect.any(String),
-            1,
-            key,
-            1,
-            ...[0.1, 4, 0.2, 2, 0.4, 1],
-            expect.any(Function)
-        );
-    });
-
-    test('passes errors through', async (client, key) => {
-        const error = Error();
-        jest.spyOn(client, 'evalsha').mockImplementation((...args: any[]) =>
-            args.pop()(error)
-        );
-
-        try {
-            const rate: Limiter.Rate = { burst: 4, flow: 0.1 };
-            await Limiter.create({ client, rate })(key);
-            fail('should throw underlying error');
-        } catch (err) {
-            expect(err).toBe(error);
-        }
-    });
-
-    test('performs the expected scaling', async () => {
-        const factor = 2;
-        const denied = 3;
-        const expected = {
-            constant: 2,
-            linear: 6,
-            power: 9,
-            exponential: 8,
-        };
-        for (const [key, val] of Object.entries(Limiter.SCALING)) {
-            expect(val(factor, denied)).toBe(expected[key]);
-        }
-    });
+it('performs the expected scaling', async t => {
+    const factor = 2;
+    const denied = 3;
+    const expected = {
+        constant: 2,
+        linear: 6,
+        power: 9,
+        exponential: 8,
+    };
+    for (const [key, val] of Object.entries(Limiter.SCALING)) {
+        t.is(val(factor, denied), expected[key]);
+    }
 });
