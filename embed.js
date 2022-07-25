@@ -3,7 +3,7 @@
  * Licensed under the MIT License.
  */
 
-const { readFileSync, writeFileSync } = require('fs');
+import { readFileSync, writeFileSync } from 'fs';
 
 const script =
     process.argv[2] === 'minify'

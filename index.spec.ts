@@ -6,13 +6,13 @@
 import test, { ExecutionContext } from 'ava';
 import * as redis from 'redis';
 
-import * as Limiter from './index';
+import * as limiter from './index.js';
 
 // The number of actions allowed in a burst (assuming one attempt per second,
 // to make the simplifying assumption that actions and time are equivalent) is
 // calculated from the burst capacity and the flow returned over that duration;
 // it is the solution to the equation: time = burst + (time * flow)
-function calcTime(rate: Limiter.Rate, bound = false): number {
+function calcTime(rate: limiter.Rate, bound = false): number {
     // If a zero bound applies to this calculation,
     // the flow rate is not applied to the first check
     return +bound + (rate.burst - +bound) / (1 - rate.flow);
@@ -20,13 +20,13 @@ function calcTime(rate: Limiter.Rate, bound = false): number {
 
 // When in constant flow, the flow value determines the number of total attempts
 // per allowed action
-function calcLoop(rate: Limiter.Rate): number {
+function calcLoop(rate: limiter.Rate): number {
     return 1 / rate.flow;
 }
 
 // When calculating remaining capacity, consider the number of used actions,
 // and the amount of this metric that would have been returned over that time
-function calcLeft(rate: Limiter.Rate, used: number, bound = false): number {
+function calcLeft(rate: limiter.Rate, used: number, bound = false): number {
     // If a zero bound applies to this calculation,
     // the flow rate is not applied to the first check
     return rate.burst - (+bound + (used - +bound) * (1 - rate.flow));
@@ -42,7 +42,7 @@ function it(
     desc: string,
     cb: (
         t: ExecutionContext,
-        client: Limiter.Client,
+        config: limiter.Config,
         key: string,
         now: () => number,
         sleep: (s: number) => Promise<void>
@@ -58,38 +58,20 @@ function it(
         const raw = redis.createClient();
         await raw.connect();
 
-        // Translate the Limiter.Client format to the Redis client format
-        const client: Limiter.Client = {
-            async eval(script: string, keys: number, ...args: any[]) {
-                const cb = args.pop();
-                try {
-                    const res = await raw.eval(
-                        // Patch the script, using a list to perform a
-                        // controlled mock of the time function
-                        script.replace(`'time'`, `'lrange','${time}',0,1`),
-                        {
-                            keys: args.slice(0, keys),
-                            arguments: args.slice(keys).map(String),
-                        }
-                    );
-                    cb(null, res);
-                } catch (e) {
-                    cb(e, null);
-                }
+        // Translate the limiter.Config format to the Redis client format
+        const config: limiter.Config = {
+            async eval(script, keys, argv) {
+                // Patch the script, using a list to perform a controlled mock
+                // of the time function
+                return raw.eval(
+                    script.replace(`'time'`, `'lrange','${time}',0,1`),
+                    { keys, arguments: argv.map(String) }
+                );
             },
-            async evalsha(hash: string, keys: number, ...args: any[]) {
-                const cb = args.pop();
-                try {
-                    // This will always fail since the sha1 hash will not match
-                    // the patched script, but it validates the fallback path
-                    const res = await raw.evalSha(hash, {
-                        keys: args.slice(0, keys),
-                        arguments: args.slice(keys).map(String),
-                    });
-                    cb(null, res);
-                } catch (e) {
-                    cb(e, null);
-                }
+            async evalsha(hash, keys, argv) {
+                // This will always fail since the sha1 hash will not match
+                // the patched script, but it validates the fallback path
+                return raw.evalSha(hash, { keys, arguments: argv.map(String) });
             },
         };
 
@@ -106,7 +88,7 @@ function it(
         };
 
         // Execute the test
-        await cb(t, client, key, now, sleep);
+        await cb(t, config, key, now, sleep);
 
         // Clean up any keys the test may have generated
         await raw.del([key, time]);
@@ -114,32 +96,32 @@ function it(
     });
 }
 
-it('performs basic validation', async (t, client) => {
-    t.throws(() => Limiter.create({ client }), { instanceOf: RangeError });
+it('performs basic validation', async (t, config) => {
+    t.throws(() => limiter.create({ ...config }), { instanceOf: RangeError });
     t.throws(
         () =>
-            Limiter.create({
-                client,
+            limiter.create({
+                ...config,
                 capacity: { window: -60, min: 10, max: 20 },
             }),
         { instanceOf: RangeError }
     );
     t.throws(
         () =>
-            Limiter.create({
-                client,
+            limiter.create({
+                ...config,
                 capacity: { window: 60, min: 10, max: 10 },
             }),
         { instanceOf: RangeError }
     );
-    t.throws(() => Limiter.create({ client, rate: { flow: 1, burst: 0 } }), {
+    t.throws(() => limiter.create({ ...config, rate: { flow: 1, burst: 0 } }), {
         instanceOf: RangeError,
     });
 });
 
-it('handles basic capacity metrics', async (t, client, key, now, sleep) => {
-    const capacity: Limiter.Capacity = { window: 60, min: 10, max: 20 };
-    const limit = Limiter.create({ client, capacity });
+it('handles basic capacity metrics', async (t, config, key, now, sleep) => {
+    const capacity: limiter.Capacity = { window: 60, min: 10, max: 20 };
+    const limit = limiter.create({ ...config, capacity });
 
     // Perform test twice, for burst and steady-state near capacity
     for (const {} of repeat(2)) {
@@ -158,9 +140,9 @@ it('handles basic capacity metrics', async (t, client, key, now, sleep) => {
     }
 });
 
-it('handles basic rate metrics', async (t, client, key, now, sleep) => {
-    const rate: Limiter.Rate = { burst: 9, flow: 1 / 2 };
-    const limit = Limiter.create({ client, rate });
+it('handles basic rate metrics', async (t, config, key, now, sleep) => {
+    const rate: limiter.Rate = { burst: 9, flow: 1 / 2 };
+    const limit = limiter.create({ ...config, rate });
 
     // Perform test twice to ensure full drain
     for (const {} of repeat(2)) {
@@ -192,14 +174,13 @@ it('handles basic rate metrics', async (t, client, key, now, sleep) => {
     }
 });
 
-it('handles multiple rates', async (t, client, key, now, sleep) => {
-    const slow: Limiter.Rate = { burst: 18, flow: 1 / 4 };
-    const fast: Limiter.Rate = { burst: 9, flow: 1 / 2 };
-    const scaling = Limiter.SCALING.exponential;
-    const limit = Limiter.create({
-        client: () => Promise.resolve(client),
+it('handles multiple rates', async (t, config, key, now, sleep) => {
+    const slow: limiter.Rate = { burst: 18, flow: 1 / 4 };
+    const fast: limiter.Rate = { burst: 9, flow: 1 / 2 };
+    const limit = limiter.create({
+        ...config,
         rate: [slow, fast],
-        scaling,
+        backoff: limiter.backoff.exponential(2),
     });
     const base = now();
     let free = fast.burst - 1;
@@ -247,9 +228,9 @@ it('handles multiple rates', async (t, client, key, now, sleep) => {
     }
 });
 
-it('handles subsecond deltas', async (t, client, key, now, sleep) => {
-    const capacity: Limiter.Capacity = { window: 1, min: 4, max: 5 };
-    const limit = Limiter.create({ client, capacity });
+it('handles subsecond deltas', async (t, config, key, now, sleep) => {
+    const capacity: limiter.Capacity = { window: 1, min: 4, max: 5 };
+    const limit = limiter.create({ ...config, capacity });
 
     const base = now();
     let allowed = 0;
@@ -266,36 +247,36 @@ it('handles subsecond deltas', async (t, client, key, now, sleep) => {
 });
 
 it('discards superfluous rates', async (t, _, key) => {
-    const client: Limiter.Client = {
-        eval() {},
-        evalsha(...args: any[]) {
-            t.deepEqual(args.slice(1, -1), [1, key, 1, 0.1, 4, 0.2, 2, 0.4, 1]);
-            args.pop()(null, [1, 1, 1]);
+    const config: limiter.Config = {
+        async eval(script, keys, argv) {
+            t.deepEqual(keys, [key]);
+            t.deepEqual(argv, [1, 0.1, 4, 0.2, 2, 0.4, 1]);
+            return [1, 1, 1];
         },
     };
 
-    const rate: Limiter.Rate[] = [
+    const rate: limiter.Rate[] = [
         { burst: 4, flow: 0.1 }, // 1 - Valid
         { burst: 3, flow: 0.2 }, // 2 - Strictly larger than 3
         { burst: 2, flow: 0.2 }, // 3 - Valid
         { burst: 2, flow: 0.3 }, // 4 - Strictly larger than 3
         { burst: 1, flow: 0.4 }, // 5 - Valid
     ];
-    await Limiter.create({ client, rate })(key);
+    await limiter.create({ ...config, rate })(key);
 });
 
 it('passes errors through', async (t, _, key) => {
     const error = Error();
-    const client: Limiter.Client = {
-        eval() {},
-        evalsha(...args: any[]) {
-            args.pop()(error, null);
+    const config: limiter.Config = {
+        async eval() {},
+        async evalsha() {
+            throw error;
         },
     };
 
     try {
-        const rate: Limiter.Rate = { burst: 4, flow: 0.1 };
-        await Limiter.create({ client, rate })(key);
+        const rate: limiter.Rate = { burst: 4, flow: 0.1 };
+        await limiter.create({ ...config, rate })(key);
         t.fail('should throw underlying error');
     } catch (err) {
         t.is(err, error);
@@ -311,7 +292,7 @@ it('performs the expected scaling', async t => {
         power: 9,
         exponential: 8,
     };
-    for (const [key, val] of Object.entries(Limiter.SCALING)) {
-        t.is(val(factor, denied), expected[key]);
+    for (const [key, val] of Object.entries(limiter.backoff)) {
+        t.is(val(factor)(denied), expected[key]);
     }
 });

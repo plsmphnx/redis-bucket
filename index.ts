@@ -4,7 +4,7 @@
  */
 
 // Common validation shorthand
-function validate(message: string, condition: any) {
+function validate(message: string, condition: unknown) {
     if (!condition) {
         throw RangeError(message);
     }
@@ -13,11 +13,11 @@ function validate(message: string, condition: any) {
 // Validate capacity metrics and translate them into rate metrics
 function validateCapacity(input: Capacity): Rate {
     validate(
-        'All capacity parameters must be greater than zero.',
+        'All capacity parameters must be greater than zero',
         input.min > 0 && input.window > 0
     );
     validate(
-        'Maximum capacity must be greater than minimum capacity.',
+        'Maximum capacity must be greater than minimum capacity',
         input.max > input.min
     );
 
@@ -30,7 +30,7 @@ function validateCapacity(input: Capacity): Rate {
 // Validate rate metrics
 function validateRate(input: Rate): Rate {
     validate(
-        'All rate parameters must be greater than zero.',
+        'All rate parameters must be greater than zero',
         input.burst > 0 && input.flow > 0
     );
 
@@ -40,7 +40,7 @@ function validateRate(input: Rate): Rate {
 // Validate and sort limits
 function validateLimits(...input: Rate[]): Rate[] {
     validate(
-        'At least one rate or capacity metric must be specified.',
+        'At least one rate or capacity metric must be specified',
         input.length
     );
 
@@ -62,15 +62,14 @@ function validateLimits(...input: Rate[]): Rate[] {
  * @param config Configuration options
  */
 export function create({
-    client,
+    eval: code,
+    evalsha: hash,
     prefix = '',
-    factor = 2,
-    scaling = SCALING.linear,
+    backoff: scale = backoff.linear(2),
     capacity = [],
     rate = [],
 }: Config): Test {
     // Precalculate values not dependent on test arguments
-    const loader = typeof client === 'function' ? client : () => client;
     const limits = validateLimits(
         ...([] as Capacity[]).concat(capacity).map(validateCapacity),
         ...([] as Rate[]).concat(rate).map(validateRate)
@@ -82,67 +81,50 @@ export function create({
 
     // Execute the Lua script on the Redis client to check available capacity
     return async (key, cost = 1) => {
-        // Lazy-load the client
-        const redis: any = await loader();
-
         // Translate function arguments to Redis arguments
-        const args = [1, prefix + key, Math.max(cost, 0), ...params];
+        const keys = [prefix + key];
+        const argv = [Math.max(cost, 0), ...params];
 
-        // Build a promise-resolving callback
-        let cb: (err: any, res: any) => void;
-        const response = new Promise<unknown[]>(
-            (resolve, reject) =>
-                (cb = (err, res) => (err ? reject(err) : resolve(res)))
-        );
-
-        // Manage the script in the Redis cache
-        redis.evalsha('{{LUA_HASH}}', ...args, (err: any, res: any) =>
-            /NOSCRIPT/.test(String(err))
-                ? redis.eval('{{LUA_CODE}}', ...args, cb)
-                : cb(err, res)
-        );
+        // Evaluate the script in the Redis cache
+        const [allow, value, index] =
+            (await hash?.('{{LUA_HASH}}', keys, argv).catch(err => {
+                if (!/NOSCRIPT/.test(err)) {
+                    throw err;
+                }
+            })) || (await code('{{LUA_CODE}}', keys, argv));
 
         // Translate the Redis response into a result object
-        const [allow, value, index] = await response;
-        return Number(allow)
+        return +allow
             ? {
                   allow: true,
-                  free: Number(value),
+                  free: +value,
               }
             : {
                   allow: false,
-                  wait:
-                      (cost / limits[Number(index) - 1].flow) *
-                      scaling(factor, Number(value) / cost),
+                  wait: (cost / limits[+index - 1].flow) * scale(+value / cost),
               };
     };
 }
 
 /** Rate-limiter instance configuration options */
 export interface Config {
-    /** Redis client used by this instance (optionally lazy and/or async) */
-    client: (Client | Promise<Client>) | (() => Client | Promise<Client>);
+    /** EVAL call to Redis */
+    eval(script: string, keys: string[], argv: unknown[]): Promise<any>;
+
+    /** EVALSHA call to Redis */
+    evalsha?(hash: string, keys: string[], argv: unknown[]): Promise<any>;
 
     /** Prefix all keys with this value (default empty) */
     prefix?: string;
 
-    /** Backoff factor (default 2) */
-    factor?: number;
-
-    /** Backoff scaling function (default linear) */
-    scaling?(factor: number, denied: number): number;
+    /** Backoff scaling function (default 2x linear) */
+    backoff?(denied: number): number;
 
     /** Capacity metric(s) to limit by */
     capacity?: Capacity | Capacity[];
 
     /** Rate metric(s) to limit by */
     rate?: Rate | Rate[];
-}
-
-/** Redis client supporting eval/evalsha */
-export interface Client {
-    eval(script: string, keys: number, ...args: any[]): unknown;
-    evalsha(hash: string, keys: number, ...args: any[]): unknown;
 }
 
 /** A rate metric to limit by */
@@ -167,18 +149,18 @@ export interface Capacity {
 }
 
 /** Predefined backoff scaling functions */
-export const SCALING = {
+export const backoff = {
     /** Constant scaling (factor) */
-    constant: (factor: number) => factor,
+    constant: (factor: number) => (denied: number) => factor,
 
     /** Linear scaling (factor * denied) */
-    linear: (factor: number, denied: number) => factor * denied,
+    linear: (factor: number) => (denied: number) => factor * denied,
 
     /** Power scaling (denied ** factor) */
-    power: (factor: number, denied: number) => denied ** factor,
+    power: (factor: number) => (denied: number) => denied ** factor,
 
     /** Exponential scaling (factor ** denied) */
-    exponential: (factor: number, denied: number) => factor ** denied,
+    exponential: (factor: number) => (denied: number) => factor ** denied,
 };
 
 /** Result type for an allowed action */

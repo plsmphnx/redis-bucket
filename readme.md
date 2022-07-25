@@ -18,7 +18,8 @@ advantages:
 
 -   _Development_ - [Node.js](https://nodejs.org/) and a running Redis instance
     for testing.
--   _Runtime_ - A Redis client supporting callback-style `eval` and `evalsha`.
+-   _Runtime_ - A Redis client supporting EVAL; EVALSHA is recommended but not
+    required.
 
 ## Example
 
@@ -33,8 +34,13 @@ client.on('error', () => {});
 
 // Create a limiter that restricts calls to 10-20 per minute
 const limit = limiter.create({
-    client,
     capacity: { window: 60, min: 10, max: 20 },
+    async eval(script: string, keys: string[], argv: unknown[]) {
+        return client.eval(script, { keys, arguments: argv.map(String) });
+    },
+    async evalsha(script: string, keys: string[], argv: unknown[]) {
+        return client.evalSha(script, { keys, arguments: argv.map(String) });
+    },
 });
 
 // Simple server, expects a "user" query parameter to identify callers
@@ -62,15 +68,12 @@ Creates a [test function](#testkey-cost) to perform rate limiting against a
 given set of metrics. Takes a configuration object containing the following
 options:
 
--   `client` - A Redis client object to be used by this instance. Note that the
-    caller must manage this client (e.g. listen to `error` events). May
-    optionally be asynchronous and/or a function that returns the client (which
-    will be called when each test is run).
+-   `eval` - A callback to execute an EVAL call on Redis.
+-   `evalsha` _(default none)_ - A callback to execute an EVALSHA call on Redis.
 -   `prefix` _(default none)_ - A string prefix to apply to all Redis keys used
     by this instance.
--   `factor` _(default 2)_ - The backoff factor used for retries.
--   `scaling` _(default linear)_ - The backoff scaling function used for
-    retries, using the provided factor.
+-   `backoff` _(default 2x linear)_ - The backoff scaling function used for
+    retries.
 -   `capacity` - A capacity metric (or array thereof) to limit by (see
     [below](#capacity-limits)).
 -   `rate` - A rate metric (or array thereof) to limit by (see
