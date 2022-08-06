@@ -10,50 +10,47 @@ function validate(message: string, condition: unknown) {
     }
 }
 
-// Validate capacity metrics and translate them into rate metrics
-function validateCapacity(input: Capacity): Rate {
+// Validate capacity metrics and translate them into flow/burst pairs
+function validateCapacity({ min, max, window }: Capacity): [number, number] {
     validate(
         'All capacity parameters must be greater than zero',
-        input.min > 0 && input.window > 0
+        min > 0 && window > 0
     );
     validate(
         'Maximum capacity must be greater than minimum capacity',
-        input.max > input.min
+        max > min
     );
 
-    return {
-        flow: input.min / input.window,
-        burst: input.max - input.min,
-    };
+    return [min / window, max - min];
 }
 
-// Validate rate metrics
-function validateRate(input: Rate): Rate {
+// Validate rate metrics and translate them into flow/burst pairs
+function validateRate({ flow, burst }: Rate): [number, number] {
     validate(
         'All rate parameters must be greater than zero',
-        input.burst > 0 && input.flow > 0
+        flow > 0 && burst > 0
     );
 
-    return input;
+    return [flow, burst];
 }
 
-// Validate and sort limits
-function validateLimits(...input: Rate[]): Rate[] {
+// Validate and sort flow/burst pairs and translate them to script parameters
+function validateLimits(...input: number[][]): number[] {
     validate(
         'At least one rate or capacity metric must be specified',
         input.length
     );
 
-    let g: number;
-
     // Sort rates by the slowest to fastest flow for consistency, or by burst
     // if flow is the same (to make them easier to filter out later)
-    const limits = input.sort((a, b) => a.flow - b.flow || a.burst - b.burst);
+    const limits = input.sort(
+        ([flow1, burst1], [flow2, burst2]) => flow1 - flow2 || burst1 - burst2
+    );
 
-    // Any limit that is strictly larger than another (in both burst and flow)
+    // Any limit that is strictly larger than another (in both flow and burst)
     // is superfluous, as the smaller limit will always be more restrictive
-    return limits.filter(
-        (l, i, ls) => (!g || l.burst < ls[g - 1].burst) && (g = i + 1)
+    return limits.reduce((params, [flow, burst]) =>
+        burst < params[params.length - 1] ? [...params, flow, burst] : params
     );
 }
 
@@ -65,18 +62,14 @@ export function create({
     eval: code,
     evalsha: hash,
     prefix = '',
-    backoff: scale = backoff.linear(2),
+    backoff = denied => 2 * denied,
     capacity = [],
     rate = [],
 }: Config): Test {
-    // Precalculate values not dependent on test arguments
-    const limits = validateLimits(
+    // Precalculate parameters not dependent on test arguments
+    const params = validateLimits(
         ...([] as Capacity[]).concat(capacity).map(validateCapacity),
         ...([] as Rate[]).concat(rate).map(validateRate)
-    );
-    const params = limits.reduce(
-        (args, limit) => args.concat(limit.flow, limit.burst),
-        [] as number[]
     );
 
     // Execute the Lua script on the Redis client to check available capacity
@@ -101,7 +94,7 @@ export function create({
               }
             : {
                   allow: false,
-                  wait: (cost / limits[+index - 1].flow) * scale(+value / cost),
+                  wait: (cost / params[2 * index - 2]) * backoff(value / cost),
               };
     };
 }
