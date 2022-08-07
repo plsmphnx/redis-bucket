@@ -62,7 +62,7 @@ export function create({
     eval: code,
     evalsha: hash,
     prefix = '',
-    backoff = denied => 2 * denied,
+    backoff = x => 2 * x,
     capacity = [],
     rate = [],
 }: Config): Test {
@@ -76,7 +76,7 @@ export function create({
     return async (key, cost = 1) => {
         // Translate function arguments to Redis arguments
         const keys = [prefix + key];
-        const argv = [Math.max(cost, 0), ...params];
+        const argv = [cost, ...params];
 
         // Evaluate the script in the Redis cache
         const [allow, value, index] =
@@ -140,21 +140,6 @@ export interface Capacity {
     /** Maximum tolerable capacity */
     max: number;
 }
-
-/** Predefined backoff scaling functions */
-export const backoff = {
-    /** Constant scaling (factor) */
-    constant: (factor: number) => (denied: number) => factor,
-
-    /** Linear scaling (factor * denied) */
-    linear: (factor: number) => (denied: number) => factor * denied,
-
-    /** Power scaling (denied ** factor) */
-    power: (factor: number) => (denied: number) => denied ** factor,
-
-    /** Exponential scaling (factor ** denied) */
-    exponential: (factor: number) => (denied: number) => factor ** denied,
-};
 
 /** Result type for an allowed action */
 export interface Allow {

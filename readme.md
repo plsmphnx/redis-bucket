@@ -32,9 +32,10 @@ import * as limiter from 'redis-bucket';
 const client = redis.createClient({});
 client.on('error', () => {});
 
-// Create a limiter that restricts calls to 10-20 per minute
+// Create the limiter
 const limit = limiter.create({
-    capacity: { window: 60, min: 10, max: 20 },
+    capacity: { window: 60, min: 10, max: 20 }, // 10-20 calls per minute
+    backoff: x => 2 ** x, // Exponential backoff
     async eval(script: string, keys: string[], argv: unknown[]) {
         return client.eval(script, { keys, arguments: argv.map(String) });
     },

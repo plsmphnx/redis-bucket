@@ -180,7 +180,7 @@ it('handles multiple rates', async (t, config, key, now, sleep) => {
     const limit = limiter.create({
         ...config,
         rate: [slow, fast],
-        backoff: limiter.backoff.exponential(2),
+        backoff: x => 2 ** x,
     });
     const base = now();
     let free = fast.burst - 1;
@@ -280,19 +280,5 @@ it('passes errors through', async (t, _, key) => {
         t.fail('should throw underlying error');
     } catch (err) {
         t.is(err, error);
-    }
-});
-
-it('performs the expected scaling', async t => {
-    const factor = 2;
-    const denied = 3;
-    const expected = {
-        constant: 2,
-        linear: 6,
-        power: 9,
-        exponential: 8,
-    };
-    for (const [key, val] of Object.entries(limiter.backoff)) {
-        t.is(val(factor)(denied), expected[key]);
     }
 });
