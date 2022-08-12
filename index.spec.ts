@@ -152,7 +152,7 @@ it('handles basic rate metrics', async (t, config, key, now, sleep) => {
         // Expect initial burst to be allowed
         const time = calcTime(rate, true);
         while (now() < base + time) {
-            t.deepEqual(await limit(key), { allow: true, free });
+            t.deepEqual(await limit(key), { allow: true, free, wait: 0 });
             await sleep(1);
             free += rate.flow - 1;
         }
@@ -188,7 +188,7 @@ it('handles multiple rates', async (t, config, key, now, sleep) => {
     // Expect initial burst to be allowed
     const timeFast = calcTime(fast, true);
     while (now() < base + timeFast) {
-        t.deepEqual(await limit(key), { allow: true, free });
+        t.deepEqual(await limit(key), { allow: true, free, wait: 0 });
         await sleep(1);
         free += fast.flow - 1;
     }
@@ -221,7 +221,7 @@ it('handles multiple rates', async (t, config, key, now, sleep) => {
             } else if (wait) {
                 t.is(result.wait, 2 * wait);
             }
-            wait = (result as any).wait;
+            wait = result.wait;
             await sleep(1);
         }
         t.is(allowed, 1);

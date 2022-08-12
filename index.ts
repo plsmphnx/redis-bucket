@@ -4,14 +4,14 @@
  */
 
 // Common validation shorthand
-function validate(message: string, condition: unknown) {
+const validate = (message: string, condition: unknown) => {
     if (!condition) {
         throw RangeError(message);
     }
-}
+};
 
 // Validate capacity metrics and translate them into flow/burst pairs
-function validateCapacity({ min, max, window }: Capacity): [number, number] {
+const validateCapacity = ({ min, max, window }: Capacity): [number, number] => {
     validate(
         'All capacity parameters must be greater than zero',
         min > 0 && window > 0
@@ -22,20 +22,20 @@ function validateCapacity({ min, max, window }: Capacity): [number, number] {
     );
 
     return [min / window, max - min];
-}
+};
 
 // Validate rate metrics and translate them into flow/burst pairs
-function validateRate({ flow, burst }: Rate): [number, number] {
+const validateRate = ({ flow, burst }: Rate): [number, number] => {
     validate(
         'All rate parameters must be greater than zero',
         flow > 0 && burst > 0
     );
 
     return [flow, burst];
-}
+};
 
 // Validate and sort flow/burst pairs and translate them to script parameters
-function validateLimits(...input: number[][]): number[] {
+const validateLimits = (...input: number[][]): number[] => {
     validate(
         'At least one rate or capacity metric must be specified',
         input.length
@@ -52,7 +52,7 @@ function validateLimits(...input: number[][]): number[] {
     return limits.reduce((params, [flow, burst]) =>
         burst < params[params.length - 1] ? [...params, flow, burst] : params
     );
-}
+};
 
 /**
  * Create a new rate-limiter test function
@@ -62,7 +62,7 @@ export function create({
     eval: code,
     evalsha: hash,
     prefix = '',
-    backoff = x => 2 * x,
+    backoff = x => x,
     capacity = [],
     rate = [],
 }: Config): Test {
@@ -87,15 +87,14 @@ export function create({
             })) || (await code('{{LUA_CODE}}', keys, argv));
 
         // Translate the Redis response into a result object
-        return +allow
-            ? {
-                  allow: true,
-                  free: +value,
-              }
-            : {
-                  allow: false,
-                  wait: (cost / params[2 * index - 2]) * backoff(value / cost),
-              };
+        return {
+            allow: allow == 1,
+            free: allow * value,
+            wait:
+                (1 - allow) *
+                (cost / params[2 * index - 2]) *
+                backoff(value / cost),
+        };
     };
 }
 
@@ -110,7 +109,7 @@ export interface Config {
     /** Prefix all keys with this value (default empty) */
     prefix?: string;
 
-    /** Backoff scaling function (default 2x linear) */
+    /** Backoff scaling function (default linear) */
     backoff?(denied: number): number;
 
     /** Capacity metric(s) to limit by */
@@ -141,26 +140,17 @@ export interface Capacity {
     max: number;
 }
 
-/** Result type for an allowed action */
-export interface Allow {
-    /** Allow this action */
-    allow: true;
+/** Result type for a rate-limited action */
+export interface Result {
+    /** Whether to allow this action */
+    allow: boolean;
 
     /** Remaining free capacity */
     free: number;
-}
-
-/** Result type for a rejected action */
-export interface Reject {
-    /** Do not allow this action */
-    allow: false;
 
     /** Wait this long before trying again (in seconds) */
     wait: number;
 }
-
-/** Possible results for a rate limited action */
-export type Result = Allow | Reject;
 
 /**
  * Rate-limiter test execution function

@@ -39,8 +39,8 @@ const limit = limiter.create({
     async eval(script: string, keys: string[], argv: unknown[]) {
         return client.eval(script, { keys, arguments: argv.map(String) });
     },
-    async evalsha(script: string, keys: string[], argv: unknown[]) {
-        return client.evalSha(script, { keys, arguments: argv.map(String) });
+    async evalsha(sha: string, keys: string[], argv: unknown[]) {
+        return client.evalSha(sha, { keys, arguments: argv.map(String) });
     },
 });
 
@@ -73,7 +73,7 @@ options:
 -   `evalsha` _(default none)_ - A callback to execute an EVALSHA call on Redis.
 -   `prefix` _(default none)_ - A string prefix to apply to all Redis keys used
     by this instance.
--   `backoff` _(default 2x linear)_ - The backoff scaling function used for
+-   `backoff` _(default linear)_ - The backoff scaling function used for
     retries.
 -   `capacity` - A capacity metric (or array thereof) to limit by (see
     [below](#capacity-limits)).
@@ -94,12 +94,12 @@ Returns a [`Result`](#result) object. Takes the following arguments:
 
 An object representing the result of a test. Contains the following parameters:
 
--   `allow` _(boolean)_ - Whether or not this action should be allowed according
-    to the rate limits.
--   `free` _(if `allow` is `true`; number)_ - The current remaining capacity
-    before actions will be rejected.
--   `wait` _(if `allow` is `false`; number)_ - How long the caller should wait
-    before trying again, in seconds.
+-   `allow` - Whether or not this action should be allowed according to the rate
+    limits.
+-   `free` - The current remaining capacity before actions will be rejected; 0
+    if allow is false.
+-   `wait` - How long the caller should wait before trying again, in seconds; 0
+    if allow is true.
 
 ## Specifying Limits
 
