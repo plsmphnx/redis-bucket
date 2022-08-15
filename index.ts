@@ -91,9 +91,8 @@ export function create({
             allow: allow == 1,
             free: allow * value,
             wait:
-                (1 - allow) *
-                (cost / params[2 * index - 2]) *
-                backoff(value / cost),
+                1 - allow &&
+                (cost / params[2 * index - 2]) * backoff(value / cost),
         };
     };
 }
