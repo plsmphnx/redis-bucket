@@ -7,6 +7,7 @@
             "Copyright (c) Microsoft Corporation.\nLicensed under the MIT License."
         ],
         "no-namespace": true,
+        "no-with-statement": false,
         "triple-equals": false
     }
 }
