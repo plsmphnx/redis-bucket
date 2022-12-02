@@ -1,5 +1,5 @@
 {
-    "ecma": 8,
+    "ecma": 2020,
     "module": true,
     "compress": {
         "unsafe": true

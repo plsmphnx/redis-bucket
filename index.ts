@@ -4,145 +4,118 @@
  */
 
 // Common validation shorthand
-function validate(message: string, condition: any) {
+const validate = (message: string, condition: unknown) => {
     if (!condition) {
         throw RangeError(message);
     }
-}
+};
 
-// Validate capacity metrics and translate them into rate metrics
-function validateCapacity(input: Capacity): Rate {
+// Validate capacity metrics and translate them into flow/burst pairs
+const validateCapacity = ({ min, max, window }: Capacity): [number, number] => {
     validate(
-        'All capacity parameters must be greater than zero.',
-        input.min > 0 && input.window > 0
+        'All capacity parameters must be greater than zero',
+        min > 0 && window > 0
     );
     validate(
-        'Maximum capacity must be greater than minimum capacity.',
-        input.max > input.min
+        'Maximum capacity must be greater than minimum capacity',
+        max > min
     );
 
-    return {
-        flow: input.min / input.window,
-        burst: input.max - input.min,
-    };
-}
+    return [min / window, max - min];
+};
 
-// Validate rate metrics
-function validateRate(input: Rate): Rate {
+// Validate rate metrics and translate them into flow/burst pairs
+const validateRate = ({ flow, burst }: Rate): [number, number] => {
     validate(
-        'All rate parameters must be greater than zero.',
-        input.burst > 0 && input.flow > 0
+        'All rate parameters must be greater than zero',
+        flow > 0 && burst > 0
     );
 
-    return input;
-}
+    return [flow, burst];
+};
 
-// Validate and sort limits
-function validateLimits(...input: Rate[]): Rate[] {
+// Validate and sort flow/burst pairs and translate them to script parameters
+const validateLimits = (...input: number[][]): number[] => {
     validate(
-        'At least one rate or capacity metric must be specified.',
+        'At least one rate or capacity metric must be specified',
         input.length
     );
 
-    let g: number;
-
     // Sort rates by the slowest to fastest flow for consistency, or by burst
     // if flow is the same (to make them easier to filter out later)
-    const limits = input.sort((a, b) => a.flow - b.flow || a.burst - b.burst);
-
-    // Any limit that is strictly larger than another (in both burst and flow)
-    // is superfluous, as the smaller limit will always be more restrictive
-    return limits.filter(
-        (l, i, ls) => (!g || l.burst < ls[g - 1].burst) && (g = i + 1)
+    const limits = input.sort(
+        ([flow1, burst1], [flow2, burst2]) => flow1 - flow2 || burst1 - burst2
     );
-}
+
+    // Any limit that is strictly larger than another (in both flow and burst)
+    // is superfluous, as the smaller limit will always be more restrictive
+    return limits.reduce((params, [flow, burst]) =>
+        burst < params[params.length - 1] ? [...params, flow, burst] : params
+    );
+};
 
 /**
  * Create a new rate-limiter test function
  * @param config Configuration options
  */
 export function create({
-    client,
+    eval: code,
+    evalsha: hash,
     prefix = '',
-    factor = 2,
-    scaling = SCALING.linear,
+    backoff = x => x,
     capacity = [],
     rate = [],
 }: Config): Test {
-    // Precalculate values not dependent on test arguments
-    const loader = typeof client === 'function' ? client : () => client;
-    const limits = validateLimits(
+    // Precalculate parameters not dependent on test arguments
+    const params = validateLimits(
         ...([] as Capacity[]).concat(capacity).map(validateCapacity),
         ...([] as Rate[]).concat(rate).map(validateRate)
-    );
-    const params = limits.reduce(
-        (args, limit) => args.concat(limit.flow, limit.burst),
-        [] as number[]
     );
 
     // Execute the Lua script on the Redis client to check available capacity
     return async (key, cost = 1) => {
-        // Lazy-load the client
-        const redis: any = await loader();
-
         // Translate function arguments to Redis arguments
-        const args = [1, prefix + key, Math.max(cost, 0), ...params];
+        const keys = [prefix + key];
+        const argv = [cost, ...params];
 
-        // Build a promise-resolving callback
-        let cb: (err: any, res: any) => void;
-        const response = new Promise<unknown[]>(
-            (resolve, reject) =>
-                (cb = (err, res) => (err ? reject(err) : resolve(res)))
-        );
-
-        // Manage the script in the Redis cache
-        redis.evalsha('{{LUA_HASH}}', ...args, (err: any, res: any) =>
-            /NOSCRIPT/.test(String(err))
-                ? redis.eval('{{LUA_CODE}}', ...args, cb)
-                : cb(err, res)
-        );
+        // Evaluate the script in the Redis cache
+        const [allow, value, index] =
+            (await hash?.('{{LUA_HASH}}', keys, argv).catch(err => {
+                if (!/NOSCRIPT/.test(err)) {
+                    throw err;
+                }
+            })) || (await code('{{LUA_CODE}}', keys, argv));
 
         // Translate the Redis response into a result object
-        const [allow, value, index] = await response;
-        return Number(allow)
-            ? {
-                  allow: true,
-                  free: Number(value),
-              }
-            : {
-                  allow: false,
-                  wait:
-                      (cost / limits[Number(index) - 1].flow) *
-                      scaling(factor, Number(value) / cost),
-              };
+        return {
+            allow: allow == 1,
+            free: allow * value,
+            wait:
+                1 - allow &&
+                (cost / params[2 * index - 2]) * backoff(value / cost),
+        };
     };
 }
 
 /** Rate-limiter instance configuration options */
 export interface Config {
-    /** Redis client used by this instance (optionally lazy and/or async) */
-    client: (Client | Promise<Client>) | (() => Client | Promise<Client>);
+    /** EVAL call to Redis */
+    eval(script: string, keys: string[], argv: unknown[]): Promise<any>;
+
+    /** EVALSHA call to Redis */
+    evalsha?(hash: string, keys: string[], argv: unknown[]): Promise<any>;
 
     /** Prefix all keys with this value (default empty) */
     prefix?: string;
 
-    /** Backoff factor (default 2) */
-    factor?: number;
-
     /** Backoff scaling function (default linear) */
-    scaling?(factor: number, denied: number): number;
+    backoff?(denied: number): number;
 
     /** Capacity metric(s) to limit by */
     capacity?: Capacity | Capacity[];
 
     /** Rate metric(s) to limit by */
     rate?: Rate | Rate[];
-}
-
-/** Redis client supporting eval/evalsha */
-export interface Client {
-    eval(script: string, keys: number, ...args: any[]): unknown;
-    evalsha(hash: string, keys: number, ...args: any[]): unknown;
 }
 
 /** A rate metric to limit by */
@@ -166,41 +139,17 @@ export interface Capacity {
     max: number;
 }
 
-/** Predefined backoff scaling functions */
-export const SCALING = {
-    /** Constant scaling (factor) */
-    constant: (factor: number) => factor,
-
-    /** Linear scaling (factor * denied) */
-    linear: (factor: number, denied: number) => factor * denied,
-
-    /** Power scaling (denied ** factor) */
-    power: (factor: number, denied: number) => denied ** factor,
-
-    /** Exponential scaling (factor ** denied) */
-    exponential: (factor: number, denied: number) => factor ** denied,
-};
-
-/** Result type for an allowed action */
-export interface Allow {
-    /** Allow this action */
-    allow: true;
+/** Result type for a rate-limited action */
+export interface Result {
+    /** Whether to allow this action */
+    allow: boolean;
 
     /** Remaining free capacity */
     free: number;
-}
-
-/** Result type for a rejected action */
-export interface Reject {
-    /** Do not allow this action */
-    allow: false;
 
     /** Wait this long before trying again (in seconds) */
     wait: number;
 }
-
-/** Possible results for a rate limited action */
-export type Result = Allow | Reject;
 
 /**
  * Rate-limiter test execution function

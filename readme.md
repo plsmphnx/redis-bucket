@@ -18,7 +18,8 @@ advantages:
 
 -   _Development_ - [Node.js](https://nodejs.org/) and a running Redis instance
     for testing.
--   _Runtime_ - A Redis client supporting callback-style `eval` and `evalsha`.
+-   _Runtime_ - A Redis client supporting EVAL; EVALSHA is recommended but not
+    required.
 
 ## Example
 
@@ -31,10 +32,16 @@ import * as limiter from 'redis-bucket';
 const client = redis.createClient({});
 client.on('error', () => {});
 
-// Create a limiter that restricts calls to 10-20 per minute
+// Create the limiter
 const limit = limiter.create({
-    client,
-    capacity: { window: 60, min: 10, max: 20 },
+    capacity: { window: 60, min: 10, max: 20 }, // 10-20 calls per minute
+    backoff: x => 2 ** x, // Exponential backoff
+    async eval(script: string, keys: string[], argv: unknown[]) {
+        return client.eval(script, { keys, arguments: argv.map(String) });
+    },
+    async evalsha(sha: string, keys: string[], argv: unknown[]) {
+        return client.evalSha(sha, { keys, arguments: argv.map(String) });
+    },
 });
 
 // Simple server, expects a "user" query parameter to identify callers
@@ -62,15 +69,12 @@ Creates a [test function](#testkey-cost) to perform rate limiting against a
 given set of metrics. Takes a configuration object containing the following
 options:
 
--   `client` - A Redis client object to be used by this instance. Note that the
-    caller must manage this client (e.g. listen to `error` events). May
-    optionally be asynchronous and/or a function that returns the client (which
-    will be called when each test is run).
+-   `eval` - A callback to execute an EVAL call on Redis.
+-   `evalsha` _(default none)_ - A callback to execute an EVALSHA call on Redis.
 -   `prefix` _(default none)_ - A string prefix to apply to all Redis keys used
     by this instance.
--   `factor` _(default 2)_ - The backoff factor used for retries.
--   `scaling` _(default linear)_ - The backoff scaling function used for
-    retries, using the provided factor.
+-   `backoff` _(default linear)_ - The backoff scaling function used for
+    retries.
 -   `capacity` - A capacity metric (or array thereof) to limit by (see
     [below](#capacity-limits)).
 -   `rate` - A rate metric (or array thereof) to limit by (see
@@ -90,12 +94,12 @@ Returns a [`Result`](#result) object. Takes the following arguments:
 
 An object representing the result of a test. Contains the following parameters:
 
--   `allow` _(boolean)_ - Whether or not this action should be allowed according
-    to the rate limits.
--   `free` _(if `allow` is `true`; number)_ - The current remaining capacity
-    before actions will be rejected.
--   `wait` _(if `allow` is `false`; number)_ - How long the caller should wait
-    before trying again, in seconds.
+-   `allow` - Whether or not this action should be allowed according to the rate
+    limits.
+-   `free` - The current remaining capacity before actions will be rejected; 0
+    if allow is false.
+-   `wait` - How long the caller should wait before trying again, in seconds; 0
+    if allow is true.
 
 ## Specifying Limits
 
