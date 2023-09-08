@@ -15,7 +15,7 @@
   },
   "author": "Microsoft",
   "license": "MIT",
-  "type": "module",
+  "type": "commonjs",
   "main": "index.js",
   "typings": "index.d.ts",
   "files": [

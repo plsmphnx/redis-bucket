@@ -1,7 +1,7 @@
 {
     "compilerOptions": {
         "target": "es2020",
-        "module": "node16",
+        "module": "CommonJS",
         "sourceMap": true,
         "declaration": true,
         "strict": true,
